@@ -1,0 +1,761 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Core Primitives
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isOwnerSuperAdmin() {
+      return isSignedIn()
+        && request.auth.token.email != null
+        && request.auth.token.email.lower() == 'mmarcialpa@gmail.com';
+    }
+
+    function userDocExists() {
+      return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        isOwnerSuperAdmin() ||
+        (userDocExists()
+          && (!('accountStatus' in getUserData()) || getUserData().accountStatus == 'active')
+          && 'roleIds' in getUserData()
+          && getUserData().roleIds is list
+          && getUserData().roleIds.hasAny(['role_super_admin', 'role_admin', 'super_admin'])) ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isActiveUser() {
+      return isAdmin() || (
+        userDocExists()
+        && getUserData().accountStatus == 'active'
+      );
+    }
+
+    // Project Membership & Permission Helpers
+    function projectExists(projectId) {
+      return exists(/databases/$(database)/documents/projects/$(projectId));
+    }
+
+    function getProjectData(projectId) {
+      return get(/databases/$(database)/documents/projects/$(projectId)).data;
+    }
+
+    function isProjectMember(projectId) {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/projects/$(projectId)/members/$(request.auth.uid));
+    }
+
+    function isProjectAdmin(projectId) {
+      return isActiveUser() && (
+        isAdmin() ||
+        (projectExists(projectId) && getProjectData(projectId).ownerId == request.auth.uid) ||
+        (isProjectMember(projectId)
+          && 'role' in get(/databases/$(database)/documents/projects/$(projectId)/members/$(request.auth.uid)).data
+          && get(/databases/$(database)/documents/projects/$(projectId)/members/$(request.auth.uid)).data.role == 'project_admin')
+      );
+    }
+
+    function isProjectApprover(projectId) {
+      return isActiveUser() && (
+        isProjectAdmin(projectId) ||
+        (isProjectMember(projectId)
+          && 'role' in get(/databases/$(database)/documents/projects/$(projectId)/members/$(request.auth.uid)).data
+          && get(/databases/$(database)/documents/projects/$(projectId)/members/$(request.auth.uid)).data.role in ['approver', 'project_admin']) ||
+        (userDocExists()
+          && 'roleIds' in getUserData()
+          && getUserData().roleIds is list
+          && getUserData().roleIds.hasAny(['role_approver', 'role_project_admin']))
+      );
+    }
+
+    function canReadProject(projectId) {
+      return isActiveUser() && (
+        isAdmin() ||
+        (projectExists(projectId) && (
+          getProjectData(projectId).ownerId == request.auth.uid ||
+          ('visibility' in getProjectData(projectId) && getProjectData(projectId).visibility == 'public') ||
+          ('visibility' in getProjectData(projectId)
+            && getProjectData(projectId).visibility == 'department'
+            && userDocExists()
+            && 'departmentId' in getUserData()
+            && 'departmentId' in getProjectData(projectId)
+            && getUserData().departmentId == getProjectData(projectId).departmentId) ||
+          isProjectMember(projectId)
+        ))
+      );
+    }
+
+    // Field & Schema Validation Helpers
+    function isValidUserFields(data) {
+      return (!('id' in data) || (data.id is string && data.id.size() > 0 && data.id.size() <= 128))
+        && (!('organizationId' in data) || data.organizationId == null || (data.organizationId is string && data.organizationId.size() <= 128))
+        && (!('email' in data) || (data.email is string && data.email.size() <= 200))
+        && (!('employeeId' in data) || data.employeeId == null || (data.employeeId is string && data.employeeId.size() <= 64))
+        && (!('firstName' in data) || data.firstName == null || (data.firstName is string && data.firstName.size() <= 100))
+        && (!('lastName' in data) || data.lastName == null || (data.lastName is string && data.lastName.size() <= 100))
+        && (!('name' in data) || data.name == null || (data.name is string && data.name.size() <= 200))
+        && (!('avatar' in data) || data.avatar == null || (data.avatar is string && data.avatar.size() <= 2000))
+        && (!('requestedDepartment' in data) || data.requestedDepartment == null || (data.requestedDepartment is string && data.requestedDepartment.size() <= 120))
+        && (!('termsAcceptedAt' in data) || data.termsAcceptedAt == null || (data.termsAcceptedAt is string && data.termsAcceptedAt.size() <= 64))
+        && (!('rejectionReason' in data) || data.rejectionReason == null || (data.rejectionReason is string && data.rejectionReason.size() <= 500))
+        && (!('reviewedBy' in data) || data.reviewedBy == null || (data.reviewedBy is string && data.reviewedBy.size() <= 128))
+        && (!('reviewedAt' in data) || data.reviewedAt == null || (data.reviewedAt is string && data.reviewedAt.size() <= 64))
+        && (!('phone' in data) || data.phone == null || (data.phone is string && data.phone.size() <= 50))
+        && (!('bio' in data) || data.bio == null || (data.bio is string && data.bio.size() <= 1000))
+        && (!('roleIds' in data) || (data.roleIds is list && data.roleIds.size() >= 1 && data.roleIds.size() <= 20))
+        && (!('accountStatus' in data) || data.accountStatus in ['active', 'suspended', 'invited', 'pending_verification', 'pending_approval', 'rejected', 'archived']);
+    }
+
+    function isValidUserCreate(data) {
+      return data.keys().hasAll(['id', 'organizationId', 'email', 'roleIds', 'accountStatus'])
+        && data.keys().hasOnly([
+          'id', 'organizationId', 'firstName', 'lastName', 'name', 'email', 'employeeId', 'avatar',
+          'departmentId', 'department', 'requestedDepartment', 'positionId', 'title', 'managerId',
+          'roleIds', 'primaryRoleId', 'role', 'accountStatus', 'emailVerified',
+          'invitedTokenHash', 'termsAcceptedAt', 'rejectionReason', 'reviewedBy', 'reviewedAt',
+          'phone', 'bio', 'dateJoined', 'createdAt', 'updatedAt',
+          'createdAtServer', 'updatedAtServer'
+        ])
+        && isValidUserFields(data);
+    }
+
+    function isPublicRegistrationAllowed(data) {
+      return exists(/databases/$(database)/documents/system/config)
+        && get(/databases/$(database)/documents/system/config).data.registrationPolicy == 'public_registration'
+        && data.organizationId == get(/databases/$(database)/documents/system/config).data.organizationId
+        && data.roleIds == ['role_member']
+        && (!('primaryRoleId' in data) || data.primaryRoleId == 'role_member')
+        && (!('departmentId' in data) || data.departmentId == null)
+        && (!('positionId' in data) || data.positionId == null)
+        && (!('managerId' in data) || data.managerId == null)
+        && (!('rejectionReason' in data) || data.rejectionReason == null)
+        && (!('reviewedBy' in data) || data.reviewedBy == null)
+        && (!('reviewedAt' in data) || data.reviewedAt == null)
+        && request.auth.token.email != null
+        && data.email.lower() == request.auth.token.email.lower()
+        && data.accountStatus == 'pending_approval';
+    }
+
+    function hasValidInvitationClaim(data) {
+      return 'invitedTokenHash' in data
+        && isValidId(data.invitedTokenHash)
+        && exists(/databases/$(database)/documents/invitationLookup/$(data.invitedTokenHash))
+        && get(/databases/$(database)/documents/invitationLookup/$(data.invitedTokenHash)).data.status in ['pending', 'sending', 'sent', 'failed']
+        && request.auth.token.email != null
+        && request.auth.token.email.lower() == get(/databases/$(database)/documents/invitationLookup/$(data.invitedTokenHash)).data.email.lower()
+        && data.organizationId == get(/databases/$(database)/documents/invitationLookup/$(data.invitedTokenHash)).data.organizationId
+        && data.roleIds == get(/databases/$(database)/documents/invitationLookup/$(data.invitedTokenHash)).data.roleIds
+        && !data.roleIds.hasAny(['role_super_admin', 'super_admin']);
+    }
+
+    function isValidRegistrationRequest(data) {
+      return data.keys().hasAll(['id', 'userId', 'organizationId', 'email', 'status', 'createdAt'])
+        && data.keys().hasOnly([
+          'id', 'userId', 'organizationId', 'firstName', 'lastName', 'name', 'email',
+          'employeeId', 'requestedDepartment', 'registrationMethod', 'invitedTokenHash',
+          'status', 'rejectionReason', 'reviewedBy', 'reviewedAt', 'createdAt', 'updatedAt'
+        ])
+        && data.id is string && data.id.size() > 0 && data.id.size() <= 128
+        && data.userId is string && data.userId.size() > 0 && data.userId.size() <= 128
+        && data.organizationId is string && data.organizationId.size() > 0 && data.organizationId.size() <= 128
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 200
+        && (!('employeeId' in data) || data.employeeId == null || (data.employeeId is string && data.employeeId.size() <= 64))
+        && (!('requestedDepartment' in data) || data.requestedDepartment == null || (data.requestedDepartment is string && data.requestedDepartment.size() <= 120))
+        && (!('rejectionReason' in data) || data.rejectionReason == null || (data.rejectionReason is string && data.rejectionReason.size() <= 500))
+        && data.status in ['pending_approval', 'approved', 'rejected', 'archived'];
+    }
+
+    function isValidPasswordRecoveryRequest(data) {
+      return data.keys().hasAll(['id', 'email', 'status', 'createdAt'])
+        && data.keys().hasOnly([
+          'id', 'organizationId', 'email', 'employeeId', 'userId', 'userName', 'note',
+          'status', 'resolutionNote', 'resolvedBy', 'resolvedByName', 'resolvedAt',
+          'createdAt', 'updatedAt'
+        ])
+        && data.id is string && data.id.size() > 0 && data.id.size() <= 128
+        && (!('organizationId' in data) || data.organizationId == null || (data.organizationId is string && data.organizationId.size() <= 128))
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 200
+        && (!('employeeId' in data) || data.employeeId == null || (data.employeeId is string && data.employeeId.size() <= 64))
+        && (!('note' in data) || data.note == null || (data.note is string && data.note.size() <= 500))
+        && (!('resolutionNote' in data) || data.resolutionNote == null || (data.resolutionNote is string && data.resolutionNote.size() <= 500))
+        && data.status in ['pending', 'approved', 'resolved', 'dismissed'];
+    }
+
+    function isValidProjectFields(data) {
+      return (!('id' in data) || (data.id is string && data.id.size() <= 128))
+        && (!('organizationId' in data) || data.organizationId == null || (data.organizationId is string && data.organizationId.size() <= 128))
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 150
+        && (!('description' in data) || data.description == null || (data.description is string && data.description.size() <= 4000))
+        && data.ownerId is string && data.ownerId.size() <= 128
+        && data.status in ['active', 'on_hold', 'completed', 'archived']
+        && (!('visibility' in data) || data.visibility in ['public', 'private', 'department']);
+    }
+
+    function isValidProjectCreate(data) {
+      return data.keys().hasAll(['id', 'organizationId', 'name', 'ownerId', 'status', 'visibility'])
+        && data.keys().hasOnly([
+          'id', 'organizationId', 'name', 'description', 'ownerId', 'departmentId',
+          'status', 'visibility', 'color', 'category', 'targetDate', 'createdAt', 'updatedAt'
+        ])
+        && isValidProjectFields(data);
+    }
+
+    function isValidTaskFields(data) {
+      return (!('id' in data) || (data.id is string && data.id.size() <= 128))
+        && data.projectId is string && data.projectId.size() <= 128
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 250
+        && (!('description' in data) || data.description == null || (data.description is string && data.description.size() <= 10000))
+        && data.status in ['todo', 'in_progress', 'pending', 'for_revision', 'for_approval', 'completed']
+        && data.priority in ['low', 'medium', 'high', 'urgent']
+        && data.createdBy is string && data.createdBy.size() <= 128
+        && (!('assignedUserIds' in data) || (data.assignedUserIds is list && data.assignedUserIds.size() <= 50))
+        && (!('subtasks' in data) || (data.subtasks is list && data.subtasks.size() <= 100))
+        && (!('attachments' in data) || (data.attachments is list && data.attachments.size() <= 50))
+        && (!('approvalHistory' in data) || (data.approvalHistory is list && data.approvalHistory.size() <= 50))
+        && (!('tags' in data) || (data.tags is list && data.tags.size() <= 30));
+    }
+
+    function isValidTaskCreate(data) {
+      return data.keys().hasAll(['id', 'projectId', 'title', 'status', 'priority', 'createdBy'])
+        && data.keys().hasOnly([
+          'id', 'projectId', 'title', 'description', 'status', 'priority', 'createdBy',
+          'assignedUserIds', 'dueDate', 'subtasks', 'attachments', 'approvalHistory',
+          'timestamps', 'tatMetrics', 'tags'
+        ])
+        && isValidTaskFields(data);
+    }
+
+    function isValidDiscussionFields(data) {
+      return data.projectId is string && data.projectId.size() <= 128
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 250
+        && data.content is string && data.content.size() <= 15000
+        && data.authorId is string && data.authorId.size() <= 128
+        && data.category in ['announcement', 'discussion', 'question', 'update'];
+    }
+
+    function isValidDiscussionCreate(data) {
+      return data.keys().hasAll(['id', 'projectId', 'title', 'content', 'authorId', 'category'])
+        && data.keys().hasOnly([
+          'id', 'projectId', 'title', 'content', 'authorId', 'category',
+          'pinned', 'createdAt', 'updatedAt', 'attachments'
+        ])
+        && data.id is string && data.id.size() <= 128
+        && isValidDiscussionFields(data);
+    }
+
+    function isValidCommentFields(data) {
+      return data.projectId is string && data.projectId.size() <= 128
+        && data.targetType in ['task', 'discussion', 'file', 'announcement', 'approval']
+        && data.targetId is string && data.targetId.size() <= 128
+        && data.userId is string && data.userId.size() <= 128
+        && data.content is string && data.content.size() >= 1 && data.content.size() <= 5000
+        && (!('mentions' in data) || (data.mentions is list && data.mentions.size() <= 50))
+        && (!('attachments' in data) || (data.attachments is list && data.attachments.size() <= 20));
+    }
+
+    function isValidCommentCreate(data) {
+      return data.keys().hasAll(['id', 'projectId', 'targetType', 'targetId', 'userId', 'content'])
+        && data.keys().hasOnly([
+          'id', 'projectId', 'targetType', 'targetId', 'userId', 'content',
+          'parentCommentId', 'mentions', 'attachments', 'reactions', 'createdAt', 'updatedAt'
+        ])
+        && data.id is string && data.id.size() <= 128
+        && isValidCommentFields(data);
+    }
+
+    function isValidProjectFileCreate(data) {
+      return data.keys().hasAll(['id', 'projectId', 'name', 'url', 'uploadedBy'])
+        && data.keys().hasOnly([
+          'id', 'projectId', 'name', 'folder', 'size', 'type', 'url',
+          'uploadedBy', 'uploadedAt', 'downloadsCount'
+        ])
+        && data.id is string && data.id.size() <= 128
+        && data.projectId is string && data.projectId.size() <= 128
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 300
+        && data.url is string && data.url.size() >= 1 && data.url.size() <= 2000
+        && data.uploadedBy is string && data.uploadedBy.size() <= 128;
+    }
+
+    function isValidEventCreate(data) {
+      return data.keys().hasAll(['id', 'projectId', 'title', 'type', 'date'])
+        && data.keys().hasOnly([
+          'id', 'projectId', 'title', 'description', 'type', 'date', 'time', 'attendeeIds'
+        ])
+        && data.id is string && data.id.size() <= 128
+        && data.projectId is string && data.projectId.size() <= 128
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 250
+        && (!('description' in data) || data.description == null || (data.description is string && data.description.size() <= 2000))
+        && data.type in ['deadline', 'milestone', 'meeting', 'review']
+        && data.date is string && data.date.size() <= 32;
+    }
+
+    function isValidNotificationCreate(data) {
+      return data.keys().hasAll(['id', 'recipientId', 'projectId', 'actorId', 'type', 'title', 'message', 'isRead'])
+        && data.keys().hasOnly([
+          'id', 'recipientId', 'projectId', 'actorId', 'targetType', 'targetId',
+          'type', 'title', 'message', 'isRead', 'createdAt'
+        ])
+        && data.id is string && data.id.size() <= 128
+        && data.recipientId is string && data.recipientId.size() <= 128
+        && data.projectId is string && data.projectId.size() <= 128
+        && data.actorId is string && data.actorId.size() <= 128
+        && data.title is string && data.title.size() <= 200
+        && data.message is string && data.message.size() <= 1000
+        && data.isRead is bool;
+    }
+
+    function isValidEmailConfig(data) {
+      return data.keys().hasAll(['id', 'organizationId', 'activeProvider', 'allowFallback', 'updatedAt'])
+        && data.keys().hasOnly([
+          'id', 'organizationId', 'activeProvider', 'allowFallback', 'fallbackProvider',
+          'senderDisplayName', 'lastDeliveryStatus', 'lastSuccessfulDeliveryAt',
+          'lastSuccessfulProvider', 'lastSuccessfulSender', 'lastErrorAt',
+          'lastErrorProvider', 'lastErrorMessage', 'updatedBy', 'updatedAt'
+        ])
+        && data.id == 'default'
+        && data.organizationId is string && data.organizationId.size() <= 128
+        && data.activeProvider in ['resend', 'gmail_oauth', 'smtp']
+        && data.allowFallback is bool
+        && (!('fallbackProvider' in data) || data.fallbackProvider == null || data.fallbackProvider in ['resend', 'gmail_oauth', 'smtp'])
+        && (!('senderDisplayName' in data) || data.senderDisplayName == null || (data.senderDisplayName is string && data.senderDisplayName.size() <= 120))
+        && (!('lastErrorMessage' in data) || data.lastErrorMessage == null || (data.lastErrorMessage is string && data.lastErrorMessage.size() <= 1000));
+    }
+
+    function isValidEmailDeliveryLog(data) {
+      return data.keys().hasAll(['id', 'organizationId', 'recipientEmail', 'category', 'idempotencyKey', 'provider', 'status', 'createdAt'])
+        && data.keys().hasOnly([
+          'id', 'organizationId', 'recipientEmail', 'subject', 'category',
+          'relatedInvitationId', 'idempotencyKey', 'provider', 'fallbackUsed',
+          'fallbackFromProvider', 'senderEmail', 'status', 'messageId',
+          'errorCode', 'errorMessage', 'retriedFromLogId', 'retriedByLogId',
+          'triggeredBy', 'createdAt', 'updatedAt'
+        ])
+        && data.id is string && data.id.size() <= 128
+        && data.organizationId is string && data.organizationId.size() <= 128
+        && data.recipientEmail is string && data.recipientEmail.size() <= 200
+        && data.category in ['invitation', 'test', 'system']
+        && data.idempotencyKey is string && data.idempotencyKey.size() <= 200
+        && data.provider in ['resend', 'gmail_oauth', 'smtp', 'none']
+        && data.status in ['sent', 'failed']
+        && (!('errorMessage' in data) || data.errorMessage == null || (data.errorMessage is string && data.errorMessage.size() <= 1000));
+    }
+
+    // System Initialization Configuration
+    match /system/{configId} {
+      allow read: if true;
+      allow create, update: if isSignedIn() && isValidId(configId) && (isOwnerSuperAdmin() || isAdmin());
+      allow delete: if false;
+    }
+
+    // Organizations & Organizational Hierarchy
+    match /organizations/{orgId} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isValidId(orgId) && isAdmin();
+
+      match /departments/{deptId} {
+        allow read: if isSignedIn();
+        allow create, update, delete: if isValidId(deptId) && isAdmin();
+      }
+
+      match /positions/{posId} {
+        allow read: if isSignedIn();
+        allow create, update, delete: if isValidId(posId) && isAdmin();
+      }
+
+      match /roles/{roleId} {
+        allow read: if isSignedIn();
+        allow create, update: if isValidId(roleId) && isAdmin();
+        allow delete: if isValidId(roleId) && isAdmin() && roleId != 'role_super_admin';
+      }
+
+      match /invitations/{invId} {
+        allow get, list: if isAdmin();
+        allow create, delete: if isValidId(invId) && isAdmin();
+        allow update: if isValidId(invId) && (
+          isAdmin() ||
+          (isSignedIn()
+            && existing().status in ['pending', 'sending', 'sent', 'failed']
+            && request.auth.token.email != null
+            && request.auth.token.email.lower() == existing().email.lower()
+            && incoming().status == 'accepted'
+            && incoming().redeemedBy == request.auth.uid
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'status', 'redeemedAt', 'redeemedBy', 'redeemedEmail', 'updatedAt'
+            ]))
+        );
+      }
+
+      match /emailConfig/{configId} {
+        allow get, list: if isAdmin();
+        allow create, update: if isValidId(configId)
+          && configId == 'default'
+          && isAdmin()
+          && isValidEmailConfig(incoming())
+          && incoming().organizationId == orgId;
+        allow delete: if false;
+      }
+
+      match /emailLogs/{logId} {
+        allow get, list: if isAdmin();
+        allow create: if isValidId(logId)
+          && isAdmin()
+          && isValidEmailDeliveryLog(incoming())
+          && incoming().id == logId
+          && incoming().organizationId == orgId;
+        allow update: if isValidId(logId)
+          && isAdmin()
+          && isValidEmailDeliveryLog(incoming())
+          && incoming().organizationId == orgId
+          && incoming().diff(existing()).affectedKeys().hasOnly(['retriedByLogId', 'updatedAt']);
+        allow delete: if false;
+      }
+    }
+
+    // Hash-Indexed Invitation Lookup (zero public enumeration)
+    match /invitationLookup/{tokenHash} {
+      allow get: if isValidId(tokenHash);
+      allow list: if false;
+      allow create, delete: if isValidId(tokenHash) && isAdmin();
+      allow update: if isValidId(tokenHash) && (
+        isAdmin() ||
+        (isSignedIn()
+          && existing().status in ['pending', 'sending', 'sent', 'failed']
+          && request.auth.token.email != null
+          && request.auth.token.email.lower() == existing().email.lower()
+          && incoming().status == 'accepted'
+          && incoming().redeemedBy == request.auth.uid
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'status', 'redeemedAt', 'redeemedBy', 'updatedAt'
+          ]))
+      );
+    }
+
+    // User Directory
+    match /users/{userId} {
+      allow get: if isOwner(userId) || isAdmin() || (userDocExists() && getUserData().accountStatus == 'active');
+      allow list: if isAdmin() || (userDocExists() && getUserData().accountStatus == 'active' && resource.data.organizationId is string);
+      allow create: if isSignedIn() && isValidId(userId) && isValidUserCreate(incoming()) && (
+        isOwnerSuperAdmin() ||
+        isAdmin() ||
+        (isOwner(userId)
+          && hasValidInvitationClaim(incoming())
+          && incoming().accountStatus == 'active') ||
+        (isOwner(userId) && isPublicRegistrationAllowed(incoming()))
+      );
+      allow update: if isSignedIn() && isValidId(userId) && isValidUserFields(incoming()) && (
+        isAdmin() ||
+        (isOwner(userId)
+          && incoming().id == existing().id
+          && incoming().email == existing().email
+          && incoming().organizationId == existing().organizationId
+          && incoming().roleIds == existing().roleIds
+          && (!('departmentId' in existing()) || incoming().departmentId == existing().departmentId)
+          && (!('positionId' in existing()) || incoming().positionId == existing().positionId)
+          && (!('managerId' in existing()) || incoming().managerId == existing().managerId)
+          && incoming().accountStatus == existing().accountStatus
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'firstName', 'lastName', 'name', 'employeeId', 'phone', 'bio', 'avatar', 'updatedAt'
+          ]))
+      );
+      allow delete: if isValidId(userId) && isAdmin();
+    }
+
+    // Registration Requests (Self-Registration Approval Queue)
+    match /registrationRequests/{requestId} {
+      allow get: if isValidId(requestId) && (isAdmin() || (isSignedIn() && existing().userId == request.auth.uid));
+      allow list: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isSignedIn()
+        && isValidId(requestId)
+        && isValidRegistrationRequest(incoming())
+        && incoming().id == requestId
+        && incoming().userId == request.auth.uid
+        && incoming().status == 'pending_approval';
+      allow update, delete: if isValidId(requestId) && isAdmin();
+    }
+
+    // Administrator-Assisted Password Recovery Requests (Never stores passwords)
+    match /passwordRecoveryRequests/{requestId} {
+      allow get, list, update, delete: if isValidId(requestId) && isAdmin();
+      allow create: if isValidId(requestId)
+        && isValidPasswordRecoveryRequest(incoming())
+        && incoming().id == requestId
+        && incoming().status == 'pending';
+    }
+
+    // Security Audit Logs (immutable)
+    match /auditLogs/{logId} {
+      allow read: if isAdmin();
+      allow create: if isActiveUser()
+        && isValidId(logId)
+        && incoming().actorId == request.auth.uid
+        && incoming().action is string
+        && incoming().action.size() <= 100;
+      allow update, delete: if false;
+    }
+
+    // Fallback admin list
+    match /admins/{adminId} {
+      allow read: if isSignedIn();
+      allow write: if isValidId(adminId) && (isOwnerSuperAdmin() || isAdmin());
+    }
+
+    // Project Workspaces & Subcollections
+    match /projects/{projectId} {
+      allow get: if isActiveUser() && isValidId(projectId) && canReadProject(projectId);
+      allow list: if isAdmin() || (
+        userDocExists()
+        && getUserData().accountStatus == 'active'
+        && (
+          existing().ownerId == request.auth.uid ||
+          ('visibility' in existing() && existing().visibility == 'public') ||
+          ('visibility' in existing()
+            && existing().visibility == 'department'
+            && 'departmentId' in getUserData()
+            && 'departmentId' in existing()
+            && existing().departmentId == getUserData().departmentId)
+        )
+      );
+      allow create: if isActiveUser()
+        && isValidId(projectId)
+        && isValidProjectCreate(incoming())
+        && incoming().id == projectId
+        && incoming().ownerId == request.auth.uid;
+      allow update: if isActiveUser()
+        && isValidId(projectId)
+        && isValidProjectFields(incoming())
+        && incoming().ownerId == existing().ownerId
+        && (!('organizationId' in existing()) || incoming().organizationId == existing().organizationId)
+        && isProjectAdmin(projectId);
+      allow delete: if isActiveUser() && isValidId(projectId) && (isAdmin() || existing().ownerId == request.auth.uid);
+
+      match /members/{memberId} {
+        allow read: if canReadProject(projectId);
+        allow create: if isSignedIn()
+          && isValidId(memberId)
+          && incoming().userId == memberId
+          && incoming().role is string && incoming().role.size() <= 64
+          && (
+            isProjectAdmin(projectId) ||
+            (memberId == request.auth.uid && getAfter(/databases/$(database)/documents/projects/$(projectId)).data.ownerId == request.auth.uid)
+          );
+        allow update: if isValidId(memberId)
+          && isProjectAdmin(projectId)
+          && incoming().userId == existing().userId
+          && incoming().role is string && incoming().role.size() <= 64;
+        allow delete: if isValidId(memberId)
+          && isProjectAdmin(projectId)
+          && memberId != getProjectData(projectId).ownerId;
+      }
+
+      match /tasks/{taskId} {
+        allow read: if canReadProject(projectId);
+        allow create: if isSignedIn()
+          && isValidId(taskId)
+          && canReadProject(projectId)
+          && isValidTaskCreate(incoming())
+          && incoming().id == taskId
+          && incoming().projectId == projectId
+          && incoming().createdBy == request.auth.uid;
+        allow update: if isSignedIn()
+          && isValidId(taskId)
+          && canReadProject(projectId)
+          && isValidTaskFields(incoming())
+          && incoming().projectId == existing().projectId
+          && incoming().createdBy == existing().createdBy
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'title', 'description', 'status', 'priority', 'assignedUserIds', 'dueDate',
+            'subtasks', 'attachments', 'approvalHistory', 'timestamps', 'tatMetrics', 'tags'
+          ])
+          && (
+            ((incoming().status == 'completed' || incoming().status == 'for_revision') && incoming().status != existing().status)
+              ? isProjectApprover(projectId)
+              : true
+          );
+        allow delete: if isValidId(taskId) && (isProjectAdmin(projectId) || existing().createdBy == request.auth.uid);
+      }
+
+      match /discussions/{discussionId} {
+        allow read: if canReadProject(projectId);
+        allow create: if isSignedIn()
+          && isValidId(discussionId)
+          && canReadProject(projectId)
+          && isValidDiscussionCreate(incoming())
+          && incoming().id == discussionId
+          && incoming().projectId == projectId
+          && incoming().authorId == request.auth.uid;
+        allow update: if isSignedIn()
+          && isValidId(discussionId)
+          && canReadProject(projectId)
+          && isValidDiscussionFields(incoming())
+          && incoming().projectId == existing().projectId
+          && incoming().authorId == existing().authorId
+          && (existing().authorId == request.auth.uid || isProjectAdmin(projectId));
+        allow delete: if isValidId(discussionId) && (existing().authorId == request.auth.uid || isProjectAdmin(projectId));
+      }
+
+      match /files/{fileId} {
+        allow read: if canReadProject(projectId);
+        allow create: if isSignedIn()
+          && isValidId(fileId)
+          && canReadProject(projectId)
+          && isValidProjectFileCreate(incoming())
+          && incoming().id == fileId
+          && incoming().projectId == projectId
+          && incoming().uploadedBy == request.auth.uid;
+        allow update: if isSignedIn()
+          && isValidId(fileId)
+          && canReadProject(projectId)
+          && incoming().projectId == existing().projectId
+          && incoming().uploadedBy == existing().uploadedBy
+          && (
+            incoming().diff(existing()).affectedKeys().hasOnly(['downloadsCount']) ||
+            existing().uploadedBy == request.auth.uid ||
+            isProjectAdmin(projectId)
+          );
+        allow delete: if isValidId(fileId) && (existing().uploadedBy == request.auth.uid || isProjectAdmin(projectId));
+      }
+
+      match /events/{eventId} {
+        allow read: if canReadProject(projectId);
+        allow create: if isSignedIn()
+          && isValidId(eventId)
+          && canReadProject(projectId)
+          && isValidEventCreate(incoming())
+          && incoming().id == eventId
+          && incoming().projectId == projectId;
+        allow update: if isSignedIn()
+          && isValidId(eventId)
+          && canReadProject(projectId)
+          && incoming().projectId == existing().projectId;
+        allow delete: if isValidId(eventId) && canReadProject(projectId);
+      }
+
+      match /activities/{activityId} {
+        allow read: if canReadProject(projectId);
+        allow create: if isSignedIn()
+          && isValidId(activityId)
+          && canReadProject(projectId)
+          && incoming().projectId == projectId
+          && incoming().userId == request.auth.uid;
+        allow update, delete: if false;
+      }
+    }
+
+    // Unified Collaboration Comments
+    match /comments/{commentId} {
+      allow read: if isActiveUser() && canReadProject(existing().projectId);
+      allow create: if isActiveUser()
+        && isValidId(commentId)
+        && isValidCommentCreate(incoming())
+        && incoming().id == commentId
+        && incoming().userId == request.auth.uid
+        && canReadProject(incoming().projectId);
+      allow update: if isActiveUser()
+        && isValidId(commentId)
+        && isValidCommentFields(incoming())
+        && incoming().userId == existing().userId
+        && incoming().projectId == existing().projectId
+        && canReadProject(existing().projectId)
+        && (
+          existing().userId == request.auth.uid ||
+          isProjectAdmin(existing().projectId) ||
+          incoming().diff(existing()).affectedKeys().hasOnly(['reactions', 'updatedAt'])
+        );
+      allow delete: if isActiveUser() && isValidId(commentId) && (
+        existing().userId == request.auth.uid || isProjectAdmin(existing().projectId)
+      );
+    }
+
+    // User Notifications (Strictly scoped to recipient)
+    match /notifications/{notificationId} {
+      allow read: if isActiveUser() && existing().recipientId == request.auth.uid;
+      allow create: if isActiveUser()
+        && isValidId(notificationId)
+        && isValidNotificationCreate(incoming())
+        && incoming().id == notificationId
+        && incoming().actorId == request.auth.uid;
+      allow update: if isActiveUser()
+        && isValidId(notificationId)
+        && existing().recipientId == request.auth.uid
+        && incoming().recipientId == existing().recipientId
+        && incoming().diff(existing()).affectedKeys().hasOnly(['isRead']);
+      allow delete: if isActiveUser() && isValidId(notificationId) && existing().recipientId == request.auth.uid;
+    }
+
+    // Denormalized User Project Index
+    match /userProjects/{userId}/items/{projectId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create, update: if isSignedIn()
+        && isValidId(userId)
+        && isValidId(projectId)
+        && incoming().projectId == projectId
+        && (
+          isOwner(userId) ||
+          isAdmin() ||
+          getAfter(/databases/$(database)/documents/projects/$(projectId)).data.ownerId == request.auth.uid ||
+          isProjectAdmin(projectId)
+        );
+      allow delete: if isSignedIn() && isValidId(userId) && isValidId(projectId) && (
+        isOwner(userId) || isAdmin() || isProjectAdmin(projectId)
+      );
+    }
+
+    // Denormalized User Task Index
+    match /userTasks/{userId}/items/{taskId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create, update: if isSignedIn()
+        && isValidId(userId)
+        && isValidId(taskId)
+        && incoming().taskId == taskId
+        && incoming().projectId is string
+        && (isOwner(userId) || isAdmin() || canReadProject(incoming().projectId));
+      allow delete: if isSignedIn()
+        && isValidId(userId)
+        && isValidId(taskId)
+        && (isOwner(userId) || isAdmin() || (existing().projectId is string && canReadProject(existing().projectId)));
+    }
+
+    // Aggregate Project Statistics
+    match /projectStatistics/{projectId} {
+      allow read: if isValidId(projectId) && canReadProject(projectId);
+      allow create, update: if isSignedIn()
+        && isValidId(projectId)
+        && (
+          isAdmin() ||
+          getAfter(/databases/$(database)/documents/projects/$(projectId)).data.ownerId == request.auth.uid ||
+          isProjectAdmin(projectId)
+        );
+      allow delete: if isValidId(projectId) && (isAdmin() || (projectExists(projectId) && isProjectAdmin(projectId)));
+    }
+  }
+}

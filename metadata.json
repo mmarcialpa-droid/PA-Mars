@@ -1,0 +1,8 @@
+{
+  "name": "MARS - Project-Centered Collaboration & Task Management",
+  "description": "Basecamp-inspired project workspace with Asana task management, Trello Kanban boards, and MARS task approval & turnaround time monitoring.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

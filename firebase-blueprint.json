@@ -1,0 +1,639 @@
+{
+  "entities": {
+    "SystemConfig": {
+      "title": "SystemConfig",
+      "description": "Global initialization state, setup progress tracking, and root organization pointer",
+      "type": "object",
+      "properties": {
+        "initialized": { "type": "boolean" },
+        "organizationId": { "type": "string" },
+        "organizationName": { "type": "string" },
+        "superAdminId": { "type": "string" },
+        "setupCompletedAt": { "type": "string" },
+        "setupStatus": { "type": "string", "enum": ["not_started", "in_progress", "active"] },
+        "registrationPolicy": { "type": "string", "enum": ["invitation_only", "admin_created", "public_registration"] },
+        "requireEmailVerification": { "type": "boolean" },
+        "requireAdminApproval": { "type": "boolean" },
+        "completedSections": { "type": "array" },
+        "currentSection": { "type": "string" },
+        "sectionStatuses": { "type": "object" },
+        "createdBy": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" },
+        "launchedAt": { "type": "string" },
+        "schemaVersion": { "type": "number" }
+      },
+      "required": ["initialized"]
+    },
+    "Organization": {
+      "title": "Organization",
+      "description": "Enterprise tenant record holding organizational hierarchy and profile",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string", "maxLength": 150 },
+        "description": { "type": "string", "maxLength": 2000 },
+        "logoUrl": { "type": "string", "maxLength": 1000 },
+        "companyEmail": { "type": "string", "maxLength": 200 },
+        "contactNumber": { "type": "string", "maxLength": 60 },
+        "officeAddress": { "type": "string", "maxLength": 500 },
+        "timezone": { "type": "string", "maxLength": 50 },
+        "defaultLanguage": { "type": "string", "maxLength": 20 },
+        "allowPublicRegistration": { "type": "boolean" },
+        "registrationPolicy": { "type": "string", "enum": ["invitation_only", "admin_created", "public_registration"] },
+        "requireEmailVerification": { "type": "boolean" },
+        "requireAdminApproval": { "type": "boolean" },
+        "status": { "type": "string", "enum": ["active", "setup"] },
+        "setupStatus": { "type": "string", "enum": ["not_started", "in_progress", "active"] },
+        "createdBy": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" },
+        "launchedAt": { "type": "string" }
+      },
+      "required": ["id", "name", "timezone", "status"]
+    },
+    "Department": {
+      "title": "Department",
+      "description": "Organizational department unit with optional hierarchical parent",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "organizationId": { "type": "string" },
+        "name": { "type": "string", "maxLength": 120 },
+        "description": { "type": "string", "maxLength": 1000 },
+        "parentDepartmentId": { "type": "string" },
+        "headUserId": { "type": "string" },
+        "departmentHeadId": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "archived"] },
+        "memberCount": { "type": "number" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "organizationId", "name", "status"]
+    },
+    "Position": {
+      "title": "Position",
+      "description": "Company title with reporting relationship to parent position",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "organizationId": { "type": "string" },
+        "title": { "type": "string", "maxLength": 120 },
+        "departmentId": { "type": "string" },
+        "parentPositionId": { "type": "string" },
+        "level": { "type": "number" },
+        "organizationalLevel": { "type": "number" },
+        "description": { "type": "string", "maxLength": 1000 },
+        "status": { "type": "string", "enum": ["active", "archived"] },
+        "assignedEmployeeCount": { "type": "number" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "organizationId", "title", "status"]
+    },
+    "Role": {
+      "title": "Role",
+      "description": "Dynamic role definition with granular permission matrix and scopes",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "organizationId": { "type": "string" },
+        "name": { "type": "string", "maxLength": 100 },
+        "description": { "type": "string", "maxLength": 1000 },
+        "level": { "type": "number" },
+        "parentRoleId": { "type": "string" },
+        "permissions": { "type": "array" },
+        "scopes": { "type": "object" },
+        "isSystemRole": { "type": "boolean" },
+        "status": { "type": "string", "enum": ["active", "archived"] },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "organizationId", "name", "level", "permissions", "status"]
+    },
+    "Invitation": {
+      "title": "Invitation",
+      "description": "Cryptographically hashed one-time invitation record with email delivery tracking",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "organizationId": { "type": "string" },
+        "email": { "type": "string", "maxLength": 150 },
+        "firstName": { "type": "string", "maxLength": 100 },
+        "lastName": { "type": "string", "maxLength": 100 },
+        "recipientName": { "type": "string", "maxLength": 200 },
+        "departmentId": { "type": "string" },
+        "positionId": { "type": "string" },
+        "roleIds": { "type": "array" },
+        "invitedBy": { "type": "string" },
+        "tokenHash": { "type": "string", "maxLength": 128 },
+        "codeMask": { "type": "string", "maxLength": 64 },
+        "status": { "type": "string", "enum": ["draft", "pending", "sending", "sent", "failed", "expired", "accepted", "revoked"] },
+        "expiresAt": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" },
+        "lastSentAt": { "type": "string" },
+        "resendCount": { "type": "number" },
+        "deliveryProvider": { "type": "string" },
+        "providerMessageId": { "type": "string" },
+        "senderEmail": { "type": "string" },
+        "deliveryNote": { "type": "string" },
+        "deliveryError": { "type": "string" },
+        "sendAttempts": { "type": "array" },
+        "redeemedAt": { "type": "string" },
+        "redeemedBy": { "type": "string" },
+        "redeemedEmail": { "type": "string" }
+      },
+      "required": ["id", "organizationId", "email", "roleIds", "tokenHash", "status", "expiresAt"]
+    },
+    "InvitationLookup": {
+      "title": "InvitationLookup",
+      "description": "SHA-256 hash-indexed invitation lookup preventing collection enumeration",
+      "type": "object",
+      "properties": {
+        "tokenHash": { "type": "string" },
+        "organizationId": { "type": "string" },
+        "organizationName": { "type": "string" },
+        "invitationId": { "type": "string" },
+        "email": { "type": "string" },
+        "firstName": { "type": "string" },
+        "lastName": { "type": "string" },
+        "departmentId": { "type": "string" },
+        "departmentName": { "type": "string" },
+        "positionId": { "type": "string" },
+        "positionTitle": { "type": "string" },
+        "roleIds": { "type": "array" },
+        "roleNames": { "type": "array" },
+        "status": { "type": "string" },
+        "expiresAt": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" },
+        "redeemedAt": { "type": "string" },
+        "redeemedBy": { "type": "string" }
+      },
+      "required": ["tokenHash", "organizationId", "invitationId", "email", "roleIds", "status", "expiresAt"]
+    },
+    "EmailConfig": {
+      "title": "EmailConfig",
+      "description": "Organization transactional email provider configuration and delivery status summary (no secrets)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "organizationId": { "type": "string" },
+        "activeProvider": { "type": "string", "enum": ["resend", "gmail_oauth", "smtp"] },
+        "allowFallback": { "type": "boolean" },
+        "fallbackProvider": { "type": "string", "enum": ["resend", "gmail_oauth", "smtp"] },
+        "senderDisplayName": { "type": "string", "maxLength": 120 },
+        "lastDeliveryStatus": { "type": "string", "enum": ["never", "sent", "failed"] },
+        "lastSuccessfulDeliveryAt": { "type": "string" },
+        "lastSuccessfulProvider": { "type": "string" },
+        "lastSuccessfulSender": { "type": "string", "maxLength": 200 },
+        "lastErrorAt": { "type": "string" },
+        "lastErrorProvider": { "type": "string" },
+        "lastErrorMessage": { "type": "string", "maxLength": 1000 },
+        "updatedBy": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "organizationId", "activeProvider", "allowFallback", "updatedAt"]
+    },
+    "EmailDeliveryLog": {
+      "title": "EmailDeliveryLog",
+      "description": "Server-recorded transactional email delivery attempt log with idempotency tracking",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "organizationId": { "type": "string" },
+        "recipientEmail": { "type": "string", "maxLength": 200 },
+        "subject": { "type": "string", "maxLength": 300 },
+        "category": { "type": "string", "enum": ["invitation", "test", "system"] },
+        "relatedInvitationId": { "type": "string" },
+        "idempotencyKey": { "type": "string", "maxLength": 200 },
+        "provider": { "type": "string", "enum": ["resend", "gmail_oauth", "smtp", "none"] },
+        "fallbackUsed": { "type": "boolean" },
+        "fallbackFromProvider": { "type": "string" },
+        "senderEmail": { "type": "string", "maxLength": 200 },
+        "status": { "type": "string", "enum": ["sent", "failed"] },
+        "messageId": { "type": "string", "maxLength": 250 },
+        "errorCode": { "type": "string", "maxLength": 100 },
+        "errorMessage": { "type": "string", "maxLength": 1000 },
+        "retriedFromLogId": { "type": "string" },
+        "retriedByLogId": { "type": "string" },
+        "triggeredBy": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "organizationId", "recipientEmail", "category", "idempotencyKey", "provider", "status", "createdAt"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Security audit record for administrative and authorization changes",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "organizationId": { "type": "string" },
+        "actorId": { "type": "string" },
+        "actorName": { "type": "string", "maxLength": 150 },
+        "actorEmail": { "type": "string", "maxLength": 150 },
+        "action": { "type": "string", "maxLength": 100 },
+        "targetType": { "type": "string" },
+        "targetId": { "type": "string" },
+        "targetTitle": { "type": "string", "maxLength": 200 },
+        "changes": { "type": "object" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "organizationId", "actorId", "action", "targetType", "targetId", "createdAt"]
+    },
+    "User": {
+      "title": "User",
+      "description": "User profile with organizational department, position, and role assignments",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "organizationId": { "type": "string" },
+        "firstName": { "type": "string", "maxLength": 100 },
+        "lastName": { "type": "string", "maxLength": 100 },
+        "name": { "type": "string", "maxLength": 200 },
+        "email": { "type": "string", "maxLength": 200 },
+        "employeeId": { "type": "string", "maxLength": 64 },
+        "avatar": { "type": "string", "maxLength": 500 },
+        "departmentId": { "type": "string" },
+        "requestedDepartment": { "type": "string", "maxLength": 120 },
+        "positionId": { "type": "string" },
+        "managerId": { "type": "string" },
+        "roleIds": { "type": "array" },
+        "primaryRoleId": { "type": "string" },
+        "accountStatus": { "type": "string", "enum": ["active", "suspended", "invited", "pending_verification", "pending_approval", "rejected", "archived"] },
+        "emailVerified": { "type": "boolean" },
+        "invitedTokenHash": { "type": "string", "maxLength": 128 },
+        "termsAcceptedAt": { "type": "string", "maxLength": 64 },
+        "rejectionReason": { "type": "string", "maxLength": 500 },
+        "reviewedBy": { "type": "string", "maxLength": 128 },
+        "reviewedAt": { "type": "string", "maxLength": 64 },
+        "phone": { "type": "string", "maxLength": 50 },
+        "bio": { "type": "string", "maxLength": 1000 },
+        "dateJoined": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "organizationId", "email", "roleIds", "accountStatus"]
+    },
+    "RegistrationRequest": {
+      "title": "RegistrationRequest",
+      "description": "Self-registration onboarding request awaiting administrator review",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "organizationId": { "type": "string" },
+        "firstName": { "type": "string", "maxLength": 100 },
+        "lastName": { "type": "string", "maxLength": 100 },
+        "name": { "type": "string", "maxLength": 200 },
+        "email": { "type": "string", "maxLength": 200 },
+        "employeeId": { "type": "string", "maxLength": 64 },
+        "requestedDepartment": { "type": "string", "maxLength": 120 },
+        "registrationMethod": { "type": "string", "enum": ["public_signup", "invitation"] },
+        "invitedTokenHash": { "type": "string", "maxLength": 128 },
+        "status": { "type": "string", "enum": ["pending_approval", "approved", "rejected", "archived"] },
+        "rejectionReason": { "type": "string", "maxLength": 500 },
+        "reviewedBy": { "type": "string", "maxLength": 128 },
+        "reviewedAt": { "type": "string", "maxLength": 64 },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "userId", "organizationId", "email", "status", "createdAt"]
+    },
+    "PasswordRecoveryRequest": {
+      "title": "PasswordRecoveryRequest",
+      "description": "Administrator-assisted password recovery request (stores zero password secrets)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "organizationId": { "type": "string" },
+        "email": { "type": "string", "maxLength": 200 },
+        "employeeId": { "type": "string", "maxLength": 64 },
+        "userId": { "type": "string" },
+        "userName": { "type": "string", "maxLength": 200 },
+        "note": { "type": "string", "maxLength": 500 },
+        "status": { "type": "string", "enum": ["pending", "approved", "resolved", "dismissed"] },
+        "resolutionNote": { "type": "string", "maxLength": 500 },
+        "resolvedBy": { "type": "string", "maxLength": 128 },
+        "resolvedByName": { "type": "string", "maxLength": 150 },
+        "resolvedAt": { "type": "string", "maxLength": 64 },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "email", "status", "createdAt"]
+    },
+    "Project": {
+      "title": "Project",
+      "description": "Project workspace",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "organizationId": { "type": "string" },
+        "name": { "type": "string", "maxLength": 150 },
+        "description": { "type": "string", "maxLength": 4000 },
+        "ownerId": { "type": "string" },
+        "departmentId": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "on_hold", "completed", "archived"] },
+        "visibility": { "type": "string", "enum": ["public", "private", "department"] },
+        "color": { "type": "string", "maxLength": 20 },
+        "category": { "type": "string", "maxLength": 100 },
+        "targetDate": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "organizationId", "name", "ownerId", "status", "visibility"]
+    },
+    "ProjectMember": {
+      "title": "ProjectMember",
+      "description": "Project membership role record",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "role": { "type": "string" },
+        "joinedAt": { "type": "string" }
+      },
+      "required": ["userId", "role", "joinedAt"]
+    },
+    "Task": {
+      "title": "Task",
+      "description": "Task work item with approval workflow and TAT tracking",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "projectId": { "type": "string" },
+        "title": { "type": "string", "maxLength": 250 },
+        "description": { "type": "string", "maxLength": 10000 },
+        "status": { "type": "string", "enum": ["todo", "in_progress", "pending", "for_revision", "for_approval", "completed"] },
+        "priority": { "type": "string", "enum": ["low", "medium", "high", "urgent"] },
+        "createdBy": { "type": "string" },
+        "assignedUserIds": { "type": "array" },
+        "dueDate": { "type": "string" },
+        "subtasks": { "type": "array" },
+        "attachments": { "type": "array" },
+        "approvalHistory": { "type": "array" },
+        "timestamps": { "type": "object" },
+        "tatMetrics": { "type": "object" },
+        "tags": { "type": "array" }
+      },
+      "required": ["id", "projectId", "title", "status", "priority", "createdBy"]
+    },
+    "Discussion": {
+      "title": "Discussion",
+      "description": "Project Message Board post or announcement",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "projectId": { "type": "string" },
+        "title": { "type": "string", "maxLength": 250 },
+        "content": { "type": "string", "maxLength": 15000 },
+        "authorId": { "type": "string" },
+        "category": { "type": "string", "enum": ["announcement", "discussion", "question", "update"] },
+        "pinned": { "type": "boolean" },
+        "attachments": { "type": "array" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "projectId", "title", "content", "authorId", "category"]
+    },
+    "ProjectFile": {
+      "title": "ProjectFile",
+      "description": "Project document or media asset backed by Firebase Storage",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "projectId": { "type": "string" },
+        "name": { "type": "string", "maxLength": 300 },
+        "folder": { "type": "string", "maxLength": 100 },
+        "size": { "type": "string", "maxLength": 40 },
+        "type": { "type": "string", "maxLength": 120 },
+        "url": { "type": "string", "maxLength": 2000 },
+        "uploadedBy": { "type": "string" },
+        "uploadedAt": { "type": "string" },
+        "downloadsCount": { "type": "number" }
+      },
+      "required": ["id", "projectId", "name", "url", "uploadedBy"]
+    },
+    "ScheduleEvent": {
+      "title": "ScheduleEvent",
+      "description": "Project milestone, review, meeting, or deadline event",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "projectId": { "type": "string" },
+        "title": { "type": "string", "maxLength": 250 },
+        "description": { "type": "string", "maxLength": 2000 },
+        "type": { "type": "string", "enum": ["deadline", "milestone", "meeting", "review"] },
+        "date": { "type": "string" },
+        "time": { "type": "string" },
+        "attendeeIds": { "type": "array" }
+      },
+      "required": ["id", "projectId", "title", "type", "date"]
+    },
+    "ActivityItem": {
+      "title": "ActivityItem",
+      "description": "Project activity timeline entry",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "projectId": { "type": "string" },
+        "userId": { "type": "string" },
+        "action": { "type": "string", "maxLength": 100 },
+        "targetType": { "type": "string" },
+        "targetId": { "type": "string" },
+        "targetTitle": { "type": "string", "maxLength": 250 },
+        "createdAt": { "type": "string" },
+        "details": { "type": "string", "maxLength": 1000 }
+      },
+      "required": ["id", "projectId", "userId", "action", "targetType", "targetId", "createdAt"]
+    },
+    "Comment": {
+      "title": "Comment",
+      "description": "Unified collaboration comment",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "projectId": { "type": "string" },
+        "targetType": { "type": "string", "enum": ["task", "discussion", "file", "announcement", "approval"] },
+        "targetId": { "type": "string" },
+        "userId": { "type": "string" },
+        "content": { "type": "string", "maxLength": 5000 },
+        "parentCommentId": { "type": "string" },
+        "mentions": { "type": "array" },
+        "reactions": { "type": "object" },
+        "attachments": { "type": "array" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "projectId", "targetType", "targetId", "userId", "content"]
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "User notification",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "recipientId": { "type": "string" },
+        "projectId": { "type": "string" },
+        "actorId": { "type": "string" },
+        "targetType": { "type": "string" },
+        "targetId": { "type": "string" },
+        "type": { "type": "string" },
+        "title": { "type": "string", "maxLength": 200 },
+        "message": { "type": "string", "maxLength": 1000 },
+        "isRead": { "type": "boolean" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "recipientId", "projectId", "actorId", "type", "title", "message", "isRead"]
+    },
+    "UserProjectIndex": {
+      "title": "UserProjectIndex",
+      "description": "Denormalized user-to-project membership index",
+      "type": "object",
+      "properties": {
+        "projectId": { "type": "string" },
+        "role": { "type": "string" },
+        "projectName": { "type": "string" },
+        "projectStatus": { "type": "string" },
+        "lastActivityAt": { "type": "string" }
+      },
+      "required": ["projectId"]
+    },
+    "UserTaskIndex": {
+      "title": "UserTaskIndex",
+      "description": "Denormalized user-to-task assignment index",
+      "type": "object",
+      "properties": {
+        "projectId": { "type": "string" },
+        "taskId": { "type": "string" },
+        "title": { "type": "string" },
+        "status": { "type": "string" },
+        "priority": { "type": "string" },
+        "dueDate": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["projectId", "taskId", "status"]
+    },
+    "ProjectStatistics": {
+      "title": "ProjectStatistics",
+      "description": "Aggregate project task and member telemetry",
+      "type": "object",
+      "properties": {
+        "totalTasks": { "type": "number" },
+        "completedTasks": { "type": "number" },
+        "pendingTasks": { "type": "number" },
+        "inProgressTasks": { "type": "number" },
+        "forRevisionTasks": { "type": "number" },
+        "forApprovalTasks": { "type": "number" },
+        "overdueTasks": { "type": "number" },
+        "totalMembers": { "type": "number" },
+        "completionPercentage": { "type": "number" },
+        "avgTurnaroundHours": { "type": "number" },
+        "updatedAt": { "type": "string" }
+      }
+    }
+  },
+  "firestore": {
+    "/system/config": {
+      "schema": "SystemConfig",
+      "description": "Stores initialization state and root organization pointer"
+    },
+    "/organizations/{organizationId}": {
+      "schema": "Organization",
+      "description": "Stores organization tenant details"
+    },
+    "/organizations/{organizationId}/departments/{departmentId}": {
+      "schema": "Department",
+      "description": "Stores company departments"
+    },
+    "/organizations/{organizationId}/positions/{positionId}": {
+      "schema": "Position",
+      "description": "Stores organizational reporting positions"
+    },
+    "/organizations/{organizationId}/roles/{roleId}": {
+      "schema": "Role",
+      "description": "Stores configurable role definitions and permission matrices"
+    },
+    "/organizations/{organizationId}/invitations/{invitationId}": {
+      "schema": "Invitation",
+      "description": "Stores employee invitations with hashed codes and email delivery attempts"
+    },
+    "/organizations/{organizationId}/emailConfig/{configId}": {
+      "schema": "EmailConfig",
+      "description": "Stores organization email provider selection, fallback policy, and last delivery telemetry"
+    },
+    "/organizations/{organizationId}/emailLogs/{logId}": {
+      "schema": "EmailDeliveryLog",
+      "description": "Stores audit logs of transactional email deliveries and failures"
+    },
+    "/invitationLookup/{tokenHash}": {
+      "schema": "InvitationLookup",
+      "description": "Hash-keyed single-document lookup for invitation verification and atomic redemption"
+    },
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Stores authorized employee profiles and assigned roles"
+    },
+    "/registrationRequests/{requestId}": {
+      "schema": "RegistrationRequest",
+      "description": "Stores onboarding approval requests submitted during open registration"
+    },
+    "/passwordRecoveryRequests/{requestId}": {
+      "schema": "PasswordRecoveryRequest",
+      "description": "Stores administrator-assisted password recovery requests without storing password secrets"
+    },
+    "/auditLogs/{logId}": {
+      "schema": "AuditLog",
+      "description": "Stores immutable audit trail of administrative events"
+    },
+    "/projects/{projectId}": {
+      "schema": "Project",
+      "description": "Stores project workspaces"
+    },
+    "/projects/{projectId}/members/{memberId}": {
+      "schema": "ProjectMember",
+      "description": "Stores project workspace memberships and roles"
+    },
+    "/projects/{projectId}/tasks/{taskId}": {
+      "schema": "Task",
+      "description": "Stores project tasks, subtasks, approvals, and TAT metrics"
+    },
+    "/projects/{projectId}/discussions/{discussionId}": {
+      "schema": "Discussion",
+      "description": "Stores project message board discussions and announcements"
+    },
+    "/projects/{projectId}/files/{fileId}": {
+      "schema": "ProjectFile",
+      "description": "Stores project file metadata linked to Firebase Storage objects"
+    },
+    "/projects/{projectId}/events/{eventId}": {
+      "schema": "ScheduleEvent",
+      "description": "Stores project schedule events and milestones"
+    },
+    "/projects/{projectId}/activities/{activityId}": {
+      "schema": "ActivityItem",
+      "description": "Stores immutable project activity timeline entries"
+    },
+    "/comments/{commentId}": {
+      "schema": "Comment",
+      "description": "Stores cross-module collaboration comments"
+    },
+    "/notifications/{notificationId}": {
+      "schema": "Notification",
+      "description": "Stores user notification alerts"
+    },
+    "/userProjects/{userId}/items/{projectId}": {
+      "schema": "UserProjectIndex",
+      "description": "Denormalized user-to-project lookup index"
+    },
+    "/userTasks/{userId}/items/{taskId}": {
+      "schema": "UserTaskIndex",
+      "description": "Denormalized user-to-task lookup index"
+    },
+    "/projectStatistics/{projectId}": {
+      "schema": "ProjectStatistics",
+      "description": "Stores aggregate statistics per project"
+    }
+  }
+}
